@@ -79,51 +79,56 @@ func (c *Cron) Start() {
 		log.Printf("%s cron start\n", time.Now().Format("2006-01-02 15:04:05"))
 	}
 	c.running = true
-	now := time.Now()
 
-	// 计算任务的下一次执行时间
-	for _, entry := range c.entries {
-		entry.next = entry.schedule.Next(now)
-	}
+	go func() {
+		now := time.Now()
 
-	for {
-		// 按时间排序
-		sort.Slice(c.entries, func(i, j int) bool {
-			return c.entries[i].next.Before(c.entries[j].next)
-		})
-
-		// 设置timer
-		var timer *time.Timer
-		if len(c.entries) <= 0 || c.entries[0].next.IsZero() {
-			timer = time.NewTimer(100000 * time.Hour)
-		} else {
-			timer = time.NewTimer(c.entries[0].next.Sub(now))
+		// 计算任务的下一次执行时间
+		for _, entry := range c.entries {
+			entry.next = entry.schedule.Next(now)
 		}
 
-		// select
-		select {
-		case now = <-timer.C:
-			for _, entry := range c.entries {
+		for {
+			// 按时间排序
+			sort.Slice(c.entries, func(i, j int) bool {
+				return c.entries[i].next.Before(c.entries[j].next)
+			})
 
-				if entry.next.After(now) || entry.next.IsZero() {
-					break
-				}
-
-				go c.runTask(entry.task)
-				entry.next = entry.schedule.Next(now)
+			// 设置timer
+			var timer *time.Timer
+			if len(c.entries) <= 0 || c.entries[0].next.IsZero() {
+				timer = time.NewTimer(100000 * time.Hour)
+			} else {
+				timer = time.NewTimer(c.entries[0].next.Sub(now))
 			}
 
-		case newEntry := <-c.add:
-			timer.Stop()
-			now = time.Now()
-			newEntry.next = newEntry.schedule.Next(now)
-			c.entries = append(c.entries, newEntry)
+			// select
+			select {
+			case now = <-timer.C:
+				for _, entry := range c.entries {
 
-		case <-c.stop:
-			timer.Stop()
-			return
+					if entry.next.After(now) || entry.next.IsZero() {
+						break
+					}
+
+					go c.runTask(entry.task)
+					entry.next = entry.schedule.Next(now)
+				}
+
+			case newEntry := <-c.add:
+				timer.Stop()
+				now = time.Now()
+				newEntry.next = newEntry.schedule.Next(now)
+				c.entries = append(c.entries, newEntry)
+
+			case <-c.stop:
+				timer.Stop()
+				return
+			}
 		}
-	}
+	}()
+
+	return
 }
 
 func (c *Cron) runTask(task *Task) {
